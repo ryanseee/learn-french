@@ -139,6 +139,17 @@ li.p.flash{animation:fl 1.8s ease-out}
 .pop .row{display:flex;flex-wrap:wrap;gap:5px;margin:0 0 10px}
 .pop .row:last-child{margin-bottom:0}
 .pop .eyebrow{margin:0 0 5px !important}
+/* the bar needs ~1200px for a single row; below that it wraps */
+@media (max-width:1200px){
+  #bar{height:auto;flex-wrap:wrap;overflow:visible;padding:7px 10px;gap:6px}
+  #bar .sep,#bar .lbl{display:none}
+}
+@media (max-width:900px){ #bar .brand{display:none} }
+@media (max-width:760px){
+  #q{flex:1 1 100px;width:auto;min-width:78px}
+  #qn{min-width:0}
+  button,.chip{padding:7px 8px;font-size:11px}
+}
 #toast{position:fixed;z-index:80;left:50%;bottom:26px;transform:translateX(-50%);background:var(--ink);color:var(--paper);
   font:600 12px var(--label);letter-spacing:.04em;padding:10px 16px;border-radius:3px;opacity:0;pointer-events:none;transition:opacity .25s}
 #toast.on{opacity:1}
@@ -167,7 +178,7 @@ li.p.flash{animation:fl 1.8s ease-out}
   <div class="sep"></div>
   <div class="g" id="zoomg"><button id="zo">−</button><button id="zi">+</button><button id="fit">Fit</button></div>
   <div class="sep"></div>
-  <div class="g"><span class="lbl">Detail</span><span id="dens"><button data-d="terms">Terms</button><button data-d="notes">Notes</button><button data-d="full">Full</button></span></div>
+  <div class="g" id="gDens"><span class="lbl">Detail</span><span id="dens"><button data-d="terms">Terms</button><button data-d="notes">Notes</button><button data-d="full">Full</button></span></div>
   <div class="sep"></div>
   <div class="g"><input id="q" placeholder="Search 474 points…" autocomplete="off"><span id="qn"></span><button id="qp">‹</button><button id="qx">›</button></div>
   <div class="sep"></div>
@@ -181,6 +192,7 @@ li.p.flash{animation:fl 1.8s ease-out}
 </div>
 </div>
 <div class="pop" id="pMore">
+  <div id="densSection" style="display:none"><p class="eyebrow">Detail</p><div class="row" id="densHost"></div></div>
   <p class="eyebrow">This file</p><div class="row">
     <button id="prt">Print</button></div>
 </div>
@@ -306,7 +318,7 @@ leg.innerHTML = `<p class="eyebrow">Légende</p>
 <div class="k"><span>Detail</span><span>Terms = headings only · Notes = the default · Full = adds examples</span></div>
 <div class="k"><span>Column</span><span>single-column view, for phones</span></div>
 <div class="k"><span>Index</span><span>every point, alphabetical, for hunting one rule fast</span></div>
-<div class="k"><span>Drag</span><span>anywhere to pan · scroll to zoom · tap a heading to fold</span></div>`;
+<div class="k"><span>Drag</span><span>anywhere to pan · scroll or pinch to zoom · double-tap to zoom in</span></div>`;
 canvas.appendChild(leg);
 
 /* ---------- index view ---------- */
@@ -391,26 +403,63 @@ function centerOn(el,z){
 }
 wall.addEventListener('wheel',e=>{ e.preventDefault(); const r=wall.getBoundingClientRect();
   zoomAt(e.deltaY<0?1.12:1/1.12, e.clientX-r.left, e.clientY-r.top); },{passive:false});
-let drag=false,lx=0,ly=0,moved=false;
-const MOVED=5;   // px of travel before a press counts as a pan, not a tap
-let pid=null;
+let drag=false,lx=0,ly=0,moved=false,pid=null;
+const MOVED=5;                 // px of travel before a press counts as a pan, not a tap
+const pts=new Map();           // live pointers, so two fingers can pinch
+let pinchD=0, pinchM=null, lastTap=0;
+const midOf=(a,b)=>{ const r=wall.getBoundingClientRect();
+  return {x:(a.x+b.x)/2-r.left, y:(a.y+b.y)/2-r.top}; };
+
 wall.addEventListener('pointerdown',e=>{
-  if(e.button && e.button!==0) return;
-  drag=true; moved=false; lx=e.clientX; ly=e.clientY; pid=e.pointerId;
+  if(e.pointerType==='mouse' && e.button) return;
+  pts.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  if(pts.size===1){ drag=true; moved=false; lx=e.clientX; ly=e.clientY; pid=e.pointerId; }
+  else if(pts.size===2){
+    drag=false; wall.classList.remove('drag'); moved=true;   // a pinch is never a tap
+    const [a,b]=[...pts.values()];
+    pinchD=Math.hypot(a.x-b.x,a.y-b.y); pinchM=midOf(a,b);
+  }
 });
+
 wall.addEventListener('pointermove',e=>{
+  if(!pts.has(e.pointerId)) return;
+  pts.set(e.pointerId,{x:e.clientX,y:e.clientY});
+
+  if(pts.size>=2){                                   // pinch: zoom about the midpoint, and track it
+    const [a,b]=[...pts.values()];
+    const d=Math.hypot(a.x-b.x,a.y-b.y), m=midOf(a,b);
+    if(pinchD>0 && d>0) zoomAt(d/pinchD, m.x, m.y);
+    if(pinchM){ ox+=m.x-pinchM.x; oy+=m.y-pinchM.y; apply(); }
+    pinchD=d; pinchM=m;
+    return;
+  }
   if(!drag) return;
   const dx=e.clientX-lx, dy=e.clientY-ly;
   if(!moved && Math.abs(dx)+Math.abs(dy)>MOVED){
     moved=true; wall.classList.add('drag');
     const sel=window.getSelection && window.getSelection(); if(sel) sel.removeAllRanges();
-    // capture only once a real pan begins, so a plain tap keeps its own target
-    try{ wall.setPointerCapture(pid); }catch(_){}
+    try{ wall.setPointerCapture(pid); }catch(_){}   // capture only once a real pan begins
   }
   if(moved){ ox+=dx; oy+=dy; apply(); }
   lx=e.clientX; ly=e.clientY;
 });
-['pointerup','pointercancel'].forEach(t=>wall.addEventListener(t,()=>{ drag=false; wall.classList.remove('drag'); }));
+
+['pointerup','pointercancel'].forEach(t=>wall.addEventListener(t,e=>{
+  // double-tap to zoom in, but not on a control
+  if(t==='pointerup' && e.pointerType!=='mouse' && !moved && pts.size===1
+     && !e.target.closest('header,.xl')){
+    const now=Date.now(), r=wall.getBoundingClientRect();
+    if(now-lastTap<300){ zoomAt(1.8, e.clientX-r.left, e.clientY-r.top); lastTap=0; }
+    else lastTap=now;
+  }
+  pts.delete(e.pointerId);
+  if(pts.size<2){ pinchD=0; pinchM=null; }
+  if(pts.size===1){                                   // one finger lifted mid-pinch: resume panning
+    const [id,a]=[...pts.entries()][0];
+    pid=id; lx=a.x; ly=a.y; drag=true;
+  }
+  if(pts.size===0){ drag=false; wall.classList.remove('drag'); }
+}));
 // a pan must not trigger the fold / cross-link handlers underneath it
 wall.addEventListener('click',e=>{ if(moved){ e.stopPropagation(); e.preventDefault(); moved=false; } }, true);
 $('#zi').onclick=()=>zoomAt(1.2,wall.clientWidth/2,wall.clientHeight/2);
@@ -541,10 +590,25 @@ addEventListener('keydown',e=>{ if(e.target.tagName==='INPUT') return;
 
 /* ---------- go ---------- */
 function boot(){
+  fitBar();
   Object.keys(ST.fold||{}).forEach(id=>{ if(ST.fold[id]) document.querySelectorAll(`.card[data-id="${id}"]`).forEach(c=>c.classList.add('folded')); });
   counts();
   setDens(ST.dens||'full');
   setView(ST.view||'wall'); refilter();
+}
+const densSlot=document.createComment('dens');
+function responsiveBar(){
+  const g=$('#gDens'), host=$('#densHost'), sec=$('#densSection');
+  if(!densSlot.parentNode) g.parentNode.insertBefore(densSlot, g.nextSibling);
+  const narrow = innerWidth<=760;
+  if(narrow && g.parentElement!==host){ host.appendChild(g); sec.style.display=''; }
+  else if(!narrow && g.parentElement===host){ densSlot.parentNode.insertBefore(g,densSlot); sec.style.display='none'; }
+}
+function fitBar(){
+  responsiveBar();
+  const h=$('#bar').offsetHeight;
+  $('#stage').style.top=h+'px';
+  document.querySelectorAll('.pop').forEach(p=>p.style.top=(h+6)+'px');
 }
 function reveal(){ document.body.classList.add('ready'); }
 boot();                                    // lay out immediately with fallback metrics
@@ -554,6 +618,6 @@ if(document.fonts && document.fonts.ready){
   addEventListener('load',()=>{ boot(); reveal(); });
 }
 setTimeout(reveal, 1200);                  // safety net if the font promise never settles
-addEventListener('resize',()=>{ if(document.body.dataset.view==='wall'){ layout(); apply(); } });
+addEventListener('resize',()=>{ fitBar(); if(document.body.dataset.view==='wall'){ layout(); fit(); } });
 </script>
 </html>
