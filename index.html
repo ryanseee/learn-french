@@ -398,7 +398,7 @@ function layout(){
 const wall=$('#wall'); let scale=1, ox=0, oy=0;
 let zsave=null;
 function apply(){
-  canvas.style.transform=`translate(${ox}px,${oy}px) scale(${scale})`;
+  canvas.style.transform=`translate3d(${ox}px,${oy}px,0) scale(${scale})`;
   clearTimeout(zsave);
   zsave=setTimeout(()=>{ ST.z={s:scale,x:ox,y:oy}; save(); }, 400);
 }
@@ -423,8 +423,18 @@ function centerOn(el,z){
 }
 wall.addEventListener('wheel',e=>{ e.preventDefault(); const r=wall.getBoundingClientRect();
   zoomAt(e.deltaY<0?1.12:1/1.12, e.clientX-r.left, e.clientY-r.top); },{passive:false});
-let drag=false,lx=0,ly=0,moved=false,pid=null;
-const MOVED=5;                 // px of travel before a press counts as a pan, not a tap
+let drag=false,lx=0,ly=0,sx=0,sy=0,moved=false,pid=null;
+const MOVED=4;
+/* coalesce moves to one transform per frame — touch fires far faster than 60Hz */
+let raf=0,pendX=0,pendY=0;
+function schedulePan(){
+  if(raf) return;
+  raf=requestAnimationFrame(()=>{ raf=0; ox+=pendX; oy+=pendY; pendX=pendY=0; apply(); });
+}
+function flushPan(){
+  if(raf){ cancelAnimationFrame(raf); raf=0; }
+  if(pendX||pendY){ ox+=pendX; oy+=pendY; pendX=pendY=0; apply(); }
+}                 // px of travel before a press counts as a pan, not a tap
 const pts=new Map();           // live pointers, so two fingers can pinch
 let pinchD=0, pinchM=null, lastTap=0;
 const midOf=(a,b)=>{ const r=wall.getBoundingClientRect();
@@ -439,7 +449,7 @@ wall.addEventListener('pointerdown',e=>{
     if(!moved){ selGesture=true; drag=false; pts.clear(); wall.classList.remove('drag'); }
   }, HOLD);
   pts.set(e.pointerId,{x:e.clientX,y:e.clientY});
-  if(pts.size===1){ drag=true; moved=false; lx=e.clientX; ly=e.clientY; pid=e.pointerId; }
+  if(pts.size===1){ drag=true; moved=false; lx=sx=e.clientX; ly=sy=e.clientY; pid=e.pointerId; }
   else if(pts.size===2){
     drag=false; wall.classList.remove('drag'); moved=true;   // a pinch is never a tap
     const [a,b]=[...pts.values()];
@@ -460,19 +470,21 @@ wall.addEventListener('pointermove',e=>{
     return;
   }
   if(!drag) return;
-  const dx=e.clientX-lx, dy=e.clientY-ly;
-  if(!moved && Math.abs(dx)+Math.abs(dy)>MOVED){
+  if(!moved && Math.abs(e.clientX-sx)+Math.abs(e.clientY-sy)>MOVED){
     moved=true; clearTimeout(holdTimer);
     wall.classList.add('drag'); document.body.classList.add('panning');
     const sel=window.getSelection && window.getSelection(); if(sel) sel.removeAllRanges();
     try{ wall.setPointerCapture(pid); }catch(_){}   // capture only once a real pan begins
+    pendX+=e.clientX-sx; pendY+=e.clientY-sy;       // keep the travel already made
+  } else if(moved){
+    pendX+=e.clientX-lx; pendY+=e.clientY-ly;
   }
-  if(moved){ ox+=dx; oy+=dy; apply(); }
   lx=e.clientX; ly=e.clientY;
+  if(moved) schedulePan();
 });
 
 ['pointerup','pointercancel'].forEach(t=>wall.addEventListener(t,e=>{
-  clearTimeout(holdTimer); document.body.classList.remove('panning');
+  clearTimeout(holdTimer); flushPan(); document.body.classList.remove('panning');
   if(selGesture){ selGesture=false; drag=false; return; }
   // double-tap to zoom in, but not on a control
   if(t==='pointerup' && e.pointerType!=='mouse' && !moved && pts.size===1
