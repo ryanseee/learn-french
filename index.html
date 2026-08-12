@@ -41,12 +41,11 @@ button:focus-visible,.chip:focus-visible,input:focus-visible{outline:2px solid #
 body.ready #stage{opacity:1;animation:none}
 #wall{position:absolute;inset:0;overflow:hidden;cursor:grab;
   background:radial-gradient(120% 90% at 50% 45%,#F7F6F1 0%,var(--paper) 55%,var(--paper2) 100%)}
-#wall.drag{cursor:grabbing}
 #wall{touch-action:none}
 #canvas{position:absolute;top:0;left:0;transform-origin:0 0}
 /* text stays selectable, exactly as on a normal page; selection is only
    suppressed for the duration of an actual pan so dragging doesn't smear blue */
-body.panning #canvas{user-select:none;-webkit-user-select:none}
+
 
 #grid{position:absolute;inset:0;pointer-events:none;
   background-image:linear-gradient(to right,rgba(90,96,118,.055) 1px,transparent 1px),
@@ -452,18 +451,20 @@ let pinchD=0, pinchM=null, lastTap=0;
 const midOf=(a,b)=>{ const r=wall.getBoundingClientRect();
   return {x:(a.x+b.x)/2-r.left, y:(a.y+b.y)/2-r.top}; };
 
+// a drag pans, so no selection may begin — unless the press was held (selGesture)
+wall.addEventListener('selectstart', e=>{ if(moved && !selGesture) e.preventDefault(); });
 let holdTimer=null, selGesture=false;
 const HOLD=400;                // ms of stillness before the press becomes a selection
 wall.addEventListener('pointerdown',e=>{
   if(e.pointerType==='mouse' && e.button) return;
   selGesture=false; clearTimeout(holdTimer);
   holdTimer=setTimeout(()=>{   // held still: stop competing, let the browser select
-    if(!moved){ selGesture=true; drag=false; pts.clear(); wall.classList.remove('drag'); }
+    if(!moved){ selGesture=true; drag=false; pts.clear(); }
   }, HOLD);
   pts.set(e.pointerId,{x:e.clientX,y:e.clientY});
   if(pts.size===1){ drag=true; moved=false; lx=sx=e.clientX; ly=sy=e.clientY; pid=e.pointerId; }
   else if(pts.size===2){
-    drag=false; wall.classList.remove('drag'); moved=true;   // a pinch is never a tap
+    drag=false; moved=true;                     // a pinch is never a tap
     const [a,b]=[...pts.values()];
     pinchD=Math.hypot(a.x-b.x,a.y-b.y); pinchM=midOf(a,b);
   }
@@ -484,19 +485,23 @@ wall.addEventListener('pointermove',e=>{
   if(!drag) return;
   if(!moved && Math.abs(e.clientX-sx)+Math.abs(e.clientY-sy)>MOVED){
     moved=true; clearTimeout(holdTimer);
-    wall.classList.add('drag'); document.body.classList.add('panning');
-    const sel=window.getSelection && window.getSelection(); if(sel) sel.removeAllRanges();
+    const sel=window.getSelection && window.getSelection();
+    if(sel && !sel.isCollapsed) sel.removeAllRanges();
     try{ wall.setPointerCapture(pid); }catch(_){}   // capture only once a real pan begins
     pendX+=e.clientX-sx; pendY+=e.clientY-sy;       // keep the travel already made
   } else if(moved){
     pendX+=e.clientX-lx; pendY+=e.clientY-ly;
   }
   lx=e.clientX; ly=e.clientY;
-  if(moved) schedulePan();
+  if(moved){
+    const s=window.getSelection && window.getSelection();
+    if(s && !s.isCollapsed) s.removeAllRanges();   // cheap when there is nothing selected
+    schedulePan();
+  }
 });
 
 ['pointerup','pointercancel'].forEach(t=>wall.addEventListener(t,e=>{
-  clearTimeout(holdTimer); flushPan(); document.body.classList.remove('panning');
+  clearTimeout(holdTimer); flushPan();
   if(selGesture){ selGesture=false; drag=false; return; }
   // double-tap to zoom in, but not on a control
   if(t==='pointerup' && e.pointerType!=='mouse' && !moved && pts.size===1
@@ -511,7 +516,7 @@ wall.addEventListener('pointermove',e=>{
     const [id,a]=[...pts.entries()][0];
     pid=id; lx=a.x; ly=a.y; drag=true;
   }
-  if(pts.size===0){ drag=false; wall.classList.remove('drag'); }
+  if(pts.size===0){ drag=false; }
 }));
 // a pan must not trigger the fold / cross-link handlers underneath it
 wall.addEventListener('click',e=>{ if(moved){ e.stopPropagation(); e.preventDefault(); moved=false; } }, true);
