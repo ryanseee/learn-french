@@ -348,6 +348,13 @@ function buildIndex(){
 
 /* ---------- layout (wall) ---------- */
 const GAP=34, ARM=360, PAD=140, TOP=330, BOT=300;
+/* the map is ~30 megapixels of text; don't raster cards that are off-screen */
+const CV = !!(window.CSS && CSS.supports && CSS.supports('content-visibility','auto'));
+function cvOff(){ if(CV) DATA.forEach(r=>{ if(r.el) r.el.style.contentVisibility='visible'; }); }
+function cvOn(){ if(CV) DATA.forEach(r=>{ if(!r.el) return;
+  r.el.style.containIntrinsicSize = r.w+'px '+Math.round(r.el.offsetHeight)+'px';
+  r.el.style.contentVisibility = 'auto';
+}); }
 const DENS={ terms:{bw:1350,bc:4,mw:750 ,mc:2},
              notes:{bw:1700,bc:4,mw:950 ,mc:2},
              full :{bw:2000,bc:4,mw:1150,mc:2} };
@@ -363,6 +370,7 @@ function geometry(){
 }
 function layout(){
   geometry();
+  cvOff();                       // measure with every card rendered
   const rw=340, rh=260;
   rootEl.style.width=rw+'px'; rootEl.style.height=rh+'px';
   const L=DATA.filter(r=>r.side==='l'), Rr=DATA.filter(r=>r.side==='r');
@@ -392,6 +400,7 @@ function layout(){
     c.setAttribute('cx',tx); c.setAttribute('cy',ty); c.setAttribute('r',4);
     c.setAttribute('fill','var(--paper)'); c.setAttribute('stroke',r.c); c.setAttribute('stroke-width',2); edges.appendChild(c);
   });
+  cvOn();
 }
 
 /* ---------- pan / zoom ---------- */
@@ -417,9 +426,12 @@ function restoreView(){
 function fit(){ const w=wall.clientWidth,h=wall.clientHeight; scale=Math.min(w/(W+80),h/(H+80)); ox=(w-W*scale)/2; oy=(h-H*scale)/2; apply(); }
 function zoomAt(f,px,py){ const n=Math.min(3,Math.max(.04,scale*f)); ox=px-(px-ox)*(n/scale); oy=py-(py-oy)*(n/scale); scale=n; apply(); }
 function centerOn(el,z){
+  const card=el.closest('.card');          // a skipped card gives its children no geometry
+  if(card && CV) card.style.contentVisibility='visible';
   const r=el.getBoundingClientRect(), wr=wall.getBoundingClientRect();
   const cxp=(r.left-wr.left-ox)/scale + r.width/(2*scale), cyp=(r.top-wr.top-oy)/scale + r.height/(2*scale);
   scale=z||Math.max(scale,.55); ox=wall.clientWidth/2-cxp*scale; oy=wall.clientHeight/2-cyp*scale; apply();
+  if(card && CV) requestAnimationFrame(()=>{ card.style.contentVisibility='auto'; });
 }
 wall.addEventListener('wheel',e=>{ e.preventDefault(); const r=wall.getBoundingClientRect();
   zoomAt(e.deltaY<0?1.12:1/1.12, e.clientX-r.left, e.clientY-r.top); },{passive:false});
@@ -597,7 +609,7 @@ function setDens(d){
 }
 document.querySelectorAll('#dens button').forEach(b=>b.onclick=()=>setDens(b.dataset.d));
 function printRegion(id){
-  buildColumn();
+  buildColumn(); cvOff();
   document.querySelectorAll('.card').forEach(c=>c.classList.toggle('printme', c.dataset.id===id && c.parentElement===scroller));
   document.body.classList.add('pm-region');
   const prev=document.body.dataset.view; document.body.dataset.view='column';
@@ -605,6 +617,7 @@ function printRegion(id){
   window.print();
 }
 $('#prt').onclick=()=>{
+  cvOff(); addEventListener('afterprint',()=>cvOn(),{once:true});
   if(document.body.dataset.view==='wall'){ fit(); document.body.classList.add('pm-map');
     window.onafterprint=()=>{document.body.classList.remove('pm-map');window.onafterprint=null;}; }
   window.print();
