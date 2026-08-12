@@ -406,7 +406,10 @@ function layout(){
 const wall=$('#wall'); let scale=1, ox=0, oy=0;
 let zsave=null;
 function apply(){
-  canvas.style.transform=`translate3d(${ox}px,${oy}px,0) scale(${scale})`;
+  // 2D transform on purpose: translate3d forces one giant composited layer, which
+  // WebKit rasterises at a clamped resolution and upscales (fuzzy), while Blink
+  // re-rasters tiles (sharp). 2D keeps both engines on the same path.
+  canvas.style.transform=`translate(${ox}px,${oy}px) scale(${scale})`;
   clearTimeout(zsave);
   zsave=setTimeout(()=>{ ST.z={s:scale,x:ox,y:oy}; save(); }, 400);
 }
