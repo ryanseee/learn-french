@@ -43,8 +43,11 @@ body.ready #stage{opacity:1;animation:none}
   background:radial-gradient(120% 90% at 50% 45%,#F7F6F1 0%,var(--paper) 55%,var(--paper2) 100%)}
 #wall.drag{cursor:grabbing}
 #wall{touch-action:none}
-#canvas{position:absolute;top:0;left:0;transform-origin:0 0;
-  user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+#canvas{position:absolute;top:0;left:0;transform-origin:0 0}
+/* text stays selectable, exactly as on a normal page; selection is only
+   suppressed for the duration of an actual pan so dragging doesn't smear blue */
+body.panning #canvas{user-select:none;-webkit-user-select:none}
+
 #grid{position:absolute;inset:0;pointer-events:none;
   background-image:linear-gradient(to right,rgba(90,96,118,.055) 1px,transparent 1px),
                    linear-gradient(to bottom,rgba(90,96,118,.055) 1px,transparent 1px);
@@ -318,7 +321,7 @@ leg.innerHTML = `<p class="eyebrow">Légende</p>
 <div class="k"><span>Detail</span><span>Terms = headings only · Notes = the default · Full = adds examples</span></div>
 <div class="k"><span>Column</span><span>single-column view, for phones</span></div>
 <div class="k"><span>Index</span><span>every point, alphabetical, for hunting one rule fast</span></div>
-<div class="k"><span>Drag</span><span>anywhere to pan · scroll or pinch to zoom · double-tap to zoom in</span></div>`;
+<div class="k"><span>Drag</span><span>anywhere to pan · pinch or scroll to zoom · press and hold to select text</span></div>`;
 canvas.appendChild(leg);
 
 /* ---------- index view ---------- */
@@ -393,7 +396,24 @@ function layout(){
 
 /* ---------- pan / zoom ---------- */
 const wall=$('#wall'); let scale=1, ox=0, oy=0;
-const apply=()=>canvas.style.transform=`translate(${ox}px,${oy}px) scale(${scale})`;
+let zsave=null;
+function apply(){
+  canvas.style.transform=`translate(${ox}px,${oy}px) scale(${scale})`;
+  clearTimeout(zsave);
+  zsave=setTimeout(()=>{ ST.z={s:scale,x:ox,y:oy}; save(); }, 400);
+}
+// is any of the map actually on screen? guards against a stale or rotated-away viewport
+function onScreen(){
+  const w=wall.clientWidth, h=wall.clientHeight;
+  return scale>0.01 && scale<=3 && ox<w && oy<h && ox+W*scale>0 && oy+H*scale>0;
+}
+function restoreView(){
+  const z=ST.z;
+  if(z && [z.s,z.x,z.y].every(n=>typeof n==='number' && isFinite(n))){
+    scale=z.s; ox=z.x; oy=z.y; apply();
+    if(!onScreen()) fit();
+  } else fit();
+}
 function fit(){ const w=wall.clientWidth,h=wall.clientHeight; scale=Math.min(w/(W+80),h/(H+80)); ox=(w-W*scale)/2; oy=(h-H*scale)/2; apply(); }
 function zoomAt(f,px,py){ const n=Math.min(3,Math.max(.04,scale*f)); ox=px-(px-ox)*(n/scale); oy=py-(py-oy)*(n/scale); scale=n; apply(); }
 function centerOn(el,z){
@@ -410,8 +430,14 @@ let pinchD=0, pinchM=null, lastTap=0;
 const midOf=(a,b)=>{ const r=wall.getBoundingClientRect();
   return {x:(a.x+b.x)/2-r.left, y:(a.y+b.y)/2-r.top}; };
 
+let holdTimer=null, selGesture=false;
+const HOLD=400;                // ms of stillness before the press becomes a selection
 wall.addEventListener('pointerdown',e=>{
   if(e.pointerType==='mouse' && e.button) return;
+  selGesture=false; clearTimeout(holdTimer);
+  holdTimer=setTimeout(()=>{   // held still: stop competing, let the browser select
+    if(!moved){ selGesture=true; drag=false; pts.clear(); wall.classList.remove('drag'); }
+  }, HOLD);
   pts.set(e.pointerId,{x:e.clientX,y:e.clientY});
   if(pts.size===1){ drag=true; moved=false; lx=e.clientX; ly=e.clientY; pid=e.pointerId; }
   else if(pts.size===2){
@@ -422,7 +448,7 @@ wall.addEventListener('pointerdown',e=>{
 });
 
 wall.addEventListener('pointermove',e=>{
-  if(!pts.has(e.pointerId)) return;
+  if(selGesture || !pts.has(e.pointerId)) return;
   pts.set(e.pointerId,{x:e.clientX,y:e.clientY});
 
   if(pts.size>=2){                                   // pinch: zoom about the midpoint, and track it
@@ -436,7 +462,8 @@ wall.addEventListener('pointermove',e=>{
   if(!drag) return;
   const dx=e.clientX-lx, dy=e.clientY-ly;
   if(!moved && Math.abs(dx)+Math.abs(dy)>MOVED){
-    moved=true; wall.classList.add('drag');
+    moved=true; clearTimeout(holdTimer);
+    wall.classList.add('drag'); document.body.classList.add('panning');
     const sel=window.getSelection && window.getSelection(); if(sel) sel.removeAllRanges();
     try{ wall.setPointerCapture(pid); }catch(_){}   // capture only once a real pan begins
   }
@@ -445,6 +472,8 @@ wall.addEventListener('pointermove',e=>{
 });
 
 ['pointerup','pointercancel'].forEach(t=>wall.addEventListener(t,e=>{
+  clearTimeout(holdTimer); document.body.classList.remove('panning');
+  if(selGesture){ selGesture=false; drag=false; return; }
   // double-tap to zoom in, but not on a control
   if(t==='pointerup' && e.pointerType!=='mouse' && !moved && pts.size===1
      && !e.target.closest('header,.xl')){
@@ -475,7 +504,7 @@ function setView(v){
   $('#zoomg').style.display = v==='wall' ? '' : 'none';
   document.querySelectorAll('#scroller .card').forEach(c=>c.style.display = v==='column' ? '' : 'none');
   $('#index').style.display = v==='index' ? '' : 'none';
-  if(v==='wall'){ layout(); fit(); }
+  if(v==='wall'){ layout(); restoreView(); }
 }
 document.querySelectorAll('#views button').forEach(b=>b.onclick=()=>setView(b.dataset.v));
 
@@ -618,6 +647,9 @@ if(document.fonts && document.fonts.ready){
   addEventListener('load',()=>{ boot(); reveal(); });
 }
 setTimeout(reveal, 1200);                  // safety net if the font promise never settles
-addEventListener('resize',()=>{ fitBar(); if(document.body.dataset.view==='wall'){ layout(); fit(); } });
+addEventListener('resize',()=>{
+  fitBar();
+  if(document.body.dataset.view==='wall'){ layout(); apply(); if(!onScreen()) fit(); }
+});
 </script>
 </html>
